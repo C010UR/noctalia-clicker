@@ -337,9 +337,6 @@ checkFocus = function(callback)
     callback(true)
     return
   end
-  if focus.checking then
-    return
-  end
   focus.checking = true
   noctalia.runAsync({ "hyprctl", "-j", "activewindow" }, function(result)
     focus.checking = false
