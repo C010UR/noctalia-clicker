@@ -1,0 +1,197 @@
+id = "c010ur/clicker"
+name = "Clicker"
+version = "1.0.0"
+plugin_api = 43
+author = "c010ur"
+license = "MIT"
+icon = "click"
+description = "Precise autoclicker and macro engine with focus-aware safety."
+tags = ["gaming", "utility", "automation"]
+
+[[setting]]
+key = "rate"
+type = "double"
+label_key = "settings.rate.label"
+description_key = "settings.rate.description"
+default = 12.0
+min = 1.0
+max = 1000.0
+step = 1.0
+
+[[setting]]
+key = "rate_unit"
+type = "select"
+label_key = "settings.rate_unit.label"
+description_key = "settings.rate_unit.description"
+default = "cps"
+options = [
+  { value = "cps", label_key = "settings.rate_unit.cps" },
+  { value = "cpm", label_key = "settings.rate_unit.cpm" },
+]
+
+[[setting]]
+key = "action"
+type = "select"
+label_key = "settings.action.label"
+description_key = "settings.action.description"
+default = "left"
+options = [
+  { value = "left", label_key = "settings.action.left" },
+  { value = "right", label_key = "settings.action.right" },
+  { value = "middle", label_key = "settings.action.middle" },
+  { value = "space", label_key = "settings.action.space" },
+  { value = "custom", label_key = "settings.action.custom" },
+]
+
+[[setting]]
+key = "custom_key"
+type = "string"
+label_key = "settings.custom_key.label"
+description_key = "settings.custom_key.description"
+default = "space"
+visible_when = { key = "action", values = ["custom"] }
+
+[[setting]]
+key = "hold_ms"
+type = "int"
+label_key = "settings.hold_ms.label"
+description_key = "settings.hold_ms.description"
+default = 8
+min = 1
+max = 100
+step = 1
+
+[[setting]]
+key = "jitter_pct"
+type = "double"
+label_key = "settings.jitter_pct.label"
+description_key = "settings.jitter_pct.description"
+default = 0.0
+min = 0.0
+max = 50.0
+step = 1.0
+
+[[setting]]
+key = "start_delay"
+type = "double"
+label_key = "settings.start_delay.label"
+description_key = "settings.start_delay.description"
+default = 3.0
+min = 0.0
+max = 10.0
+step = 0.5
+
+[[setting]]
+key = "max_duration"
+type = "double"
+label_key = "settings.max_duration.label"
+description_key = "settings.max_duration.description"
+default = 0.0
+min = 0.0
+max = 86400.0
+step = 1.0
+
+[[setting]]
+key = "target_app"
+type = "string"
+label_key = "settings.target_app.label"
+description_key = "settings.target_app.description"
+default = ""
+advanced = true
+
+[[setting]]
+key = "stop_on_focus_loss"
+type = "bool"
+label_key = "settings.stop_on_focus_loss.label"
+description_key = "settings.stop_on_focus_loss.description"
+default = true
+advanced = true
+
+[[setting]]
+key = "show_osd"
+type = "bool"
+label_key = "settings.show_osd.label"
+description_key = "settings.show_osd.description"
+default = true
+
+[[setting]]
+key = "notify"
+type = "bool"
+label_key = "settings.notify.label"
+description_key = "settings.notify.description"
+default = true
+
+[[setting]]
+key = "helper_path"
+type = "file"
+label_key = "settings.helper_path.label"
+description_key = "settings.helper_path.description"
+default = "~/.local/bin/clickerd"
+advanced = true
+
+[[setting]]
+key = "macro_default_repeat"
+type = "int"
+label_key = "settings.macro_default_repeat.label"
+description_key = "settings.macro_default_repeat.description"
+default = 1
+min = 0
+max = 1000000
+step = 1
+advanced = true
+
+[[setting]]
+key = "macro_default_loop_delay"
+type = "int"
+label_key = "settings.macro_default_loop_delay.label"
+description_key = "settings.macro_default_loop_delay.description"
+default = 250
+min = 0
+max = 60000
+step = 50
+advanced = true
+
+[[setting]]
+key = "macro_max_runtime"
+type = "int"
+label_key = "settings.macro_max_runtime.label"
+description_key = "settings.macro_max_runtime.description"
+default = 600
+min = 0
+max = 86400
+step = 30
+advanced = true
+
+[[service]]
+id = "service"
+entry = "service.luau"
+
+[[widget]]
+id = "widget"
+entry = "widget.luau"
+
+[[widget.setting]]
+key = "hide_when_idle"
+type = "bool"
+label_key = "settings.widget.hide_when_idle.label"
+description_key = "settings.widget.hide_when_idle.description"
+default = false
+
+[[widget.setting]]
+key = "show_rate"
+type = "bool"
+label_key = "settings.widget.show_rate.label"
+description_key = "settings.widget.show_rate.description"
+default = true
+
+[[panel]]
+id = "panel"
+entry = "panel.luau"
+width = 430
+height = 640
+placement = "attached"
+open_near_click = true
+
+[[shortcut]]
+id = "shortcut"
+entry = "shortcut.luau"

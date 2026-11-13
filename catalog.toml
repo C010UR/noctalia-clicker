@@ -1,0 +1,11 @@
+[[plugin]]
+id = "c010ur/clicker"
+name = "Clicker"
+version = "1.0.0"
+author = "c010ur"
+license = "MIT"
+icon = "click"
+description = "Precise autoclicker and macro engine with focus-aware safety and a Noctalia panel."
+deprecated = false
+plugin_api = 43
+tags = ["gaming", "utility", "automation"]
