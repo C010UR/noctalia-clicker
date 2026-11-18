@@ -1,8 +1,8 @@
 # Noctalia Clicker
 
-A Noctalia plugin for precise autoclicking and keyboard/mouse macros on
-Wayland. It uses the existing `ydotoold` virtual device and a small native
-helper instead of spawning a process per click.
+A Noctalia plugin for precise autoclicking, keyboard/mouse macros, and a Terraria
+Fisher on Wayland. It uses the existing `ydotoold` virtual device and a
+small native helper instead of spawning a process per click.
 
 ## Layout
 
@@ -12,7 +12,7 @@ clicker/                     # plugin directory (id: c010ur/clicker)
   plugin.toml                # manifest + typed settings
   service.luau               # helper lifecycle, safety, IPC
   widget.luau                # bar widget
-  panel.luau                 # clicker controls + macro editor
+  panel.luau                 # clicker, macros, and Terraria Fisher tabs
   shortcut.luau              # control-center tile
   lib/common.luau            # shared helpers
   translations/en.json       # settings and UI strings

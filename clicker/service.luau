@@ -3,9 +3,23 @@
 
 local C = require("./lib/common.luau")
 
+local DEFAULT_HELPER = "~/.local/bin/clickerd"
+local STATUS_POLL_MS = 200
+local HELPER_STALE_MS = 3000
+local HELPER_START_TIMEOUT_MS = 3000
+local RESTART_DELAY_MS = 350
+local FOCUS_POLL_MS = 500
+local HEARTBEAT_MS = 1000
+
+local STOP_NOTICES = {
+  duration = "notification.duration",
+  focus = "notification.focus_lost",
+}
+
 local runtime = {
   phase = "idle",
   mode = "clicker",
+  toggleMode = "clicker",
   name = "",
   helper = "starting",
   helperVersion = "",
@@ -19,20 +33,29 @@ local runtime = {
   macroStepCount = 0,
   macroRepeat = 0,
   macroRepeatIndex = 0,
+  fisherState = "idle",
+  fisherCasts = 0,
+  fisherBites = 0,
+  fisherMisses = 0,
+  audioLevel = 0,
+  matchScore = 0,
+  templateSource = "",
   startedAt = 0,
   stopAt = 0,
   countdownEndsAt = 0,
   countdownRemaining = 0,
-  sessionRate = 12,
+  sessionRate = C.DEFAULTS.rate,
   sessionAction = "left",
   sessionCustom = "space",
-  sessionHold = 8,
-  sessionJitter = 0,
-  sessionDelay = 3,
-  sessionDuration = 0,
+  sessionHold = C.DEFAULTS.hold,
+  sessionJitter = C.DEFAULTS.jitter,
+  sessionDelay = C.DEFAULTS.delay,
+  sessionDuration = C.DEFAULTS.duration,
   sessionTarget = "",
   sessionStopOnFocus = true,
-  overrides = false,
+  sessionSensitivity = C.FISHER_DEFAULTS.sensitivity,
+  sessionBiteTimeout = C.FISHER_DEFAULTS.biteTimeout,
+  sessionPostReel = C.FISHER_DEFAULTS.postReel,
 }
 
 local cfg = {}
@@ -46,6 +69,7 @@ local lastStatusRead = 0
 local lastHeartbeat = 0
 local lastPublish = ""
 local lastCommandSeq = nil
+local lastHelperError = ""
 
 local function tr(key)
   return noctalia.tr(key)
@@ -74,56 +98,76 @@ local function osd(text, inactive)
 end
 
 local function readConfig()
-  cfg.rate = tonumber(noctalia.getConfig("rate")) or 12
+  cfg.rate = tonumber(noctalia.getConfig("rate")) or C.DEFAULTS.rate
   cfg.rateUnit = noctalia.getConfig("rate_unit") or "cps"
   cfg.action = noctalia.getConfig("action") or "left"
   cfg.customKey = noctalia.getConfig("custom_key") or "space"
-  cfg.holdMs = tonumber(noctalia.getConfig("hold_ms")) or 8
-  cfg.jitterPct = tonumber(noctalia.getConfig("jitter_pct")) or 0
-  cfg.startDelay = tonumber(noctalia.getConfig("start_delay")) or 0
-  cfg.maxDuration = tonumber(noctalia.getConfig("max_duration")) or 0
+  cfg.holdMs = tonumber(noctalia.getConfig("hold_ms")) or C.DEFAULTS.hold
+  cfg.jitterPct = tonumber(noctalia.getConfig("jitter_pct")) or C.DEFAULTS.jitter
+  cfg.startDelay = tonumber(noctalia.getConfig("start_delay")) or C.DEFAULTS.delay
+  cfg.maxDuration = tonumber(noctalia.getConfig("max_duration")) or C.DEFAULTS.duration
   cfg.targetApp = noctalia.getConfig("target_app") or ""
   cfg.stopOnFocus = noctalia.getConfig("stop_on_focus_loss") ~= false
   cfg.showOsd = noctalia.getConfig("show_osd") ~= false
   cfg.notify = noctalia.getConfig("notify") ~= false
-  cfg.helperPath = noctalia.getConfig("helper_path") or "~/.local/bin/clickerd"
+  cfg.helperPath = noctalia.getConfig("helper_path") or DEFAULT_HELPER
   cfg.macroRepeat = tonumber(noctalia.getConfig("macro_default_repeat")) or 1
   cfg.macroLoopDelay = tonumber(noctalia.getConfig("macro_default_loop_delay")) or 250
   cfg.macroMaxRuntime = tonumber(noctalia.getConfig("macro_max_runtime")) or 600
+
+  cfg.fisherTargetApp = noctalia.getConfig("fisher_target_app") or C.FISHER_DEFAULTS.targetApp
+  cfg.fisherCastButton = noctalia.getConfig("fisher_cast_button") or "left"
+  cfg.fisherPressMs = tonumber(noctalia.getConfig("fisher_press_ms")) or C.FISHER_DEFAULTS.press
+  cfg.fisherSettleMs = tonumber(noctalia.getConfig("fisher_settle_ms")) or C.FISHER_DEFAULTS.settle
+  cfg.fisherBiteTimeout = tonumber(noctalia.getConfig("fisher_bite_timeout")) or C.FISHER_DEFAULTS.biteTimeout
+  cfg.fisherPostReel = tonumber(noctalia.getConfig("fisher_post_reel_ms")) or C.FISHER_DEFAULTS.postReel
+  cfg.fisherRecover = tonumber(noctalia.getConfig("fisher_recover_ms")) or C.FISHER_DEFAULTS.recover
+  cfg.fisherMaxCasts = tonumber(noctalia.getConfig("fisher_max_casts")) or C.FISHER_DEFAULTS.maxCasts
+  cfg.fisherMaxRuntime = tonumber(noctalia.getConfig("fisher_max_runtime")) or C.FISHER_DEFAULTS.maxRuntime
+  cfg.fisherSensitivity = tonumber(noctalia.getConfig("fisher_sensitivity")) or C.FISHER_DEFAULTS.sensitivity
+  cfg.fisherMinInterval = tonumber(noctalia.getConfig("fisher_min_interval")) or C.FISHER_DEFAULTS.minInterval
+  cfg.fisherAudioDevice = noctalia.getConfig("fisher_audio_device") or ""
+  cfg.fisherTemplate = noctalia.getConfig("fisher_template") or ""
+  cfg.fisherPitchVariants = noctalia.getConfig("fisher_pitch_variants") ~= false
 end
 
-local function effectiveSession()
-  local rate = session.rate or C.cpsFrom(cfg.rate, cfg.rateUnit)
-  local action = session.action or cfg.action
-  local custom = session.customKey or cfg.customKey
-  local hold = session.hold or cfg.holdMs
-  local jitter = session.jitter or cfg.jitterPct
-  local delay = session.delay
-  if delay == nil then
-    delay = cfg.startDelay
-  end
-  local duration = session.duration
-  if duration == nil then
-    duration = cfg.maxDuration
-  end
-  local target = session.target
-  if target == nil then
-    target = cfg.targetApp
-  end
-  local stopOnFocus = session.stopOnFocus
-  if stopOnFocus == nil then
-    stopOnFocus = cfg.stopOnFocus
-  end
+-- Session values override settings; settings override built-in defaults.
+local function effectiveSession(mode)
+  local fisherMode = mode == "fisher"
+  local defaultTarget = fisherMode and cfg.fisherTargetApp or cfg.targetApp
+  local rate = C.firstDefined(session.rate, C.cpsFrom(cfg.rate, cfg.rateUnit))
+  local action = C.firstDefined(session.action, cfg.action) or "left"
+  local customKey = C.firstDefined(session.customKey, cfg.customKey) or "space"
+  local hold = C.firstDefined(session.hold, cfg.holdMs)
+  local jitter = C.firstDefined(session.jitter, cfg.jitterPct)
+  local delay = C.firstDefined(session.delay, cfg.startDelay)
+  local duration = C.firstDefined(session.duration, cfg.maxDuration)
+  local target = C.firstDefined(session.target, defaultTarget)
+  local stopOnFocus = C.firstDefined(session.stopOnFocus, cfg.stopOnFocus)
+
   return {
-    rate = C.clamp(tonumber(rate) or 12, C.RATE_MIN, C.RATE_MAX),
+    rate = C.clamp(tonumber(rate) or C.DEFAULTS.rate, C.RATE_MIN, C.RATE_MAX),
     action = action,
-    customKey = custom,
-    hold = C.clamp(tonumber(hold) or 8, 0, 2000),
-    jitter = C.clamp(tonumber(jitter) or 0, 0, C.JITTER_MAX),
-    delay = C.clamp(tonumber(delay) or 0, 0, 10),
-    duration = C.clamp(tonumber(duration) or 0, 0, 86400),
+    customKey = customKey,
+    hold = C.clamp(tonumber(hold) or C.DEFAULTS.hold, 0, 2000),
+    jitter = C.clamp(tonumber(jitter) or C.DEFAULTS.jitter, 0, C.JITTER_MAX),
+    delay = C.clamp(tonumber(delay) or C.DEFAULTS.delay, 0, 10),
+    duration = C.clamp(tonumber(duration) or C.DEFAULTS.duration, 0, 86400),
     target = tostring(target or ""),
     stopOnFocus = stopOnFocus == true,
+  }
+end
+
+-- Fisher overrides are kept beside the clicker ones so one panel tab does not
+-- disturb the other's session.
+local function effectiveFisher()
+  local sensitivity = C.firstDefined(session.sensitivity, cfg.fisherSensitivity)
+  local timeout = C.firstDefined(session.fisherTimeout, cfg.fisherBiteTimeout)
+  return {
+    sensitivity = C.clamp(tonumber(sensitivity) or C.FISHER_DEFAULTS.sensitivity, 0.1, 0.99),
+    biteTimeout = C.clamp(tonumber(timeout) or C.FISHER_DEFAULTS.biteTimeout, 3, 300),
+    postReel = C.clamp(tonumber(C.firstDefined(session.postReel, cfg.fisherPostReel)) or C.FISHER_DEFAULTS.postReel, 100, 5000),
+    runtimeLimit = tonumber(cfg.fisherMaxRuntime) or 0,
   }
 end
 
@@ -137,7 +181,10 @@ local function syncSessionToRuntime(e)
   runtime.sessionDuration = e.duration
   runtime.sessionTarget = e.target
   runtime.sessionStopOnFocus = e.stopOnFocus
-  runtime.overrides = next(session) ~= nil
+  local fisher = effectiveFisher()
+  runtime.sessionSensitivity = fisher.sensitivity
+  runtime.sessionBiteTimeout = fisher.biteTimeout
+  runtime.sessionPostReel = fisher.postReel
 end
 
 local function publish(force)
@@ -175,10 +222,55 @@ local function writeHelperConfig(config)
   return writeTextAtomic(C.configPath(), encoded)
 end
 
+-- The helper config is built in one place so startup, macro playback and live
+-- updates always send the same shape.
+local function helperConfig(e)
+  return {
+    mode = "repeat",
+    cps = e.rate,
+    hold_ms = e.hold,
+    jitter_pct = e.jitter,
+    max_runtime_s = e.duration,
+    action = C.actionForHelper(e.action, e.customKey),
+  }
+end
+
+local function macroConfig(e, def)
+  local config = helperConfig(e)
+  config.mode = "macro"
+  config.max_runtime_s = def.max_runtime_s
+  config.macro = def
+  return config
+end
+
+local function fisherConfig()
+  local fisher = effectiveFisher()
+  local limit = math.max(0, tonumber(fisher.runtimeLimit) or 0)
+  return {
+    mode = "fisher",
+    max_runtime_s = limit,
+    action = { type = "mouse", button = cfg.fisherCastButton },
+    fisher = {
+      cast_button = cfg.fisherCastButton,
+      press_ms = cfg.fisherPressMs,
+      settle_ms = cfg.fisherSettleMs,
+      bite_timeout_s = fisher.biteTimeout,
+      post_reel_ms = fisher.postReel,
+      recover_ms = cfg.fisherRecover,
+      max_casts = cfg.fisherMaxCasts,
+      sensitivity = fisher.sensitivity,
+      min_interval_ms = cfg.fisherMinInterval,
+      audio_device = cfg.fisherAudioDevice,
+      template = cfg.fisherTemplate,
+      pitch_variants = cfg.fisherPitchVariants,
+    },
+  }
+end
+
 local function resolveHelper()
   local path = cfg.helperPath
   if type(path) ~= "string" or path == "" then
-    path = "~/.local/bin/clickerd"
+    path = DEFAULT_HELPER
   end
   if string.sub(path, 1, 1) == "~" then
     path = noctalia.expandPath(path)
@@ -204,13 +296,6 @@ local function sendSignal(signal)
   return true
 end
 
-local stop
-local startNow
-local requestStart
-local checkFocus
-local startFocusWatch
-local stopFocusWatch
-
 local function releaseFallback()
   if helper.path then
     noctalia.runAsync({ helper.path, "--release-all" })
@@ -219,16 +304,32 @@ local function releaseFallback()
   end
 end
 
+local stop
+local startNow
+local requestStart
+local checkFocus
+local startFocusWatch
+local stopFocusWatch
+
+local function failFocus()
+  runtime.phase = "idle"
+  runtime.error = "target window is not focused"
+  publish(true)
+  notifyError(tr("panel.title"), runtime.error)
+end
+
 local function handleStopReason(reason)
   if reason == "completed" then
-    notify(tr("panel.macro.finished"))
-    osd(tr("panel.macro.finished"), true)
-  elseif reason == "duration" then
-    notify(tr("notification.duration"))
-    osd(tr("notification.duration"), true)
-  elseif reason == "focus" then
-    notify(tr("notification.focus_lost"))
-    osd(tr("notification.focus_lost"), true)
+    local key = runtime.mode == "fisher" and "notification.fishing_limit" or "panel.macro.finished"
+    notify(tr(key))
+    osd(tr(key), true)
+    return
+  end
+
+  local notice = STOP_NOTICES[reason]
+  if notice then
+    notify(tr(notice))
+    osd(tr(notice), true)
   elseif reason == "heartbeat" or reason == "error" then
     local detail = runtime.error ~= "" and runtime.error or tr("notification.helper_error")
     notifyError(tr("notification.helper_error"), detail)
@@ -242,6 +343,7 @@ end
 
 stop = function(reason)
   local wasActive = runtime.phase ~= "idle"
+  log(string.format("stop: %s (phase %s, mode %s)", tostring(reason), tostring(runtime.phase), tostring(runtime.mode)))
   pendingStart = nil
   countdown = nil
   deferredStart = nil
@@ -254,6 +356,7 @@ stop = function(reason)
   runtime.countdownEndsAt = 0
   runtime.countdownRemaining = 0
   runtime.macroStep = 0
+  runtime.fisherState = "idle"
   runtime.lastReason = reason or "stopped"
   publish(true)
   if wasActive then
@@ -284,6 +387,11 @@ local function spawnHelper(quiet)
   ensureRuntimeDir()
   noctalia.removeFile(C.statusPath())
   noctalia.writeFile(C.heartbeatPath(), tostring(noctalia.nowMs()))
+  -- The helper loads its config on startup, so seed it with the current
+  -- settings before launching. Without this the first launch reports a
+  -- missing config.json even though nothing is running yet.
+  writeHelperConfig(helperConfig(effectiveSession()))
+
   local function shellQuote(value)
     return "'" .. tostring(value):gsub("'", "'\\''") .. "'"
   end
@@ -370,6 +478,9 @@ end
 local function setRunningState(mode, name, e)
   runtime.phase = "running"
   runtime.mode = mode
+  if mode == "clicker" or mode == "fisher" then
+    runtime.toggleMode = mode
+  end
   runtime.name = name or ""
   runtime.error = ""
   runtime.lastReason = ""
@@ -390,7 +501,10 @@ local function setRunningState(mode, name, e)
 end
 
 startNow = function(kind, macro, playMode)
-  local e = effectiveSession()
+  local e = effectiveSession(kind == "fisher" and "fisher" or "clicker")
+  if kind == "fisher" then
+    e.duration = math.max(0, tonumber(cfg.fisherMaxRuntime) or 0)
+  end
   if helper.proc and runtime.helper ~= "ready" then
     pendingStart = { kind = kind, macro = macro, playMode = playMode, at = noctalia.nowMs() }
     return
@@ -404,25 +518,12 @@ startNow = function(kind, macro, playMode)
   local config
   if kind == "macro" then
     local def = C.macroForHelper(macro, playMode, cfg)
-    config = {
-      mode = "macro",
-      cps = e.rate,
-      hold_ms = e.hold,
-      jitter_pct = e.jitter,
-      max_runtime_s = def.max_runtime_s,
-      action = C.actionForHelper(e.action, e.customKey),
-      macro = def,
-    }
+    config = macroConfig(e, def)
     runtime.macroStepCount = #def.steps
+  elseif kind == "fisher" then
+    config = fisherConfig()
   else
-    config = {
-      mode = "repeat",
-      cps = e.rate,
-      hold_ms = e.hold,
-      jitter_pct = e.jitter,
-      max_runtime_s = e.duration,
-      action = C.actionForHelper(e.action, e.customKey),
-    }
+    config = helperConfig(e)
   end
 
   local ok, err = writeHelperConfig(config)
@@ -435,10 +536,14 @@ startNow = function(kind, macro, playMode)
   end
 
   setRunningState(kind, macro and macro.name or "", e)
+  log(string.format("run started: %s, target '%s', duration %.0f", kind, tostring(e.target), e.duration))
   publish(true)
   sendSignal("USR1")
 
-  if kind == "macro" then
+  if kind == "fisher" then
+    osd(tr("notification.fishing_started"), false)
+    notify(tr("notification.fishing_started"), "")
+  elseif kind == "macro" then
     osd(tr("notification.macro_started") .. ": " .. tostring(macro.name), false)
     notify(tr("notification.macro_started"), macro.name)
   else
@@ -448,23 +553,22 @@ startNow = function(kind, macro, playMode)
 end
 
 requestStart = function(kind, macro, playMode)
-  local wasActive = runtime.phase == "running" or runtime.phase == "countdown"
-  local e = effectiveSession()
+  local wasActive = C.isActive(runtime)
+  local e = effectiveSession(kind == "fisher" and "fisher" or "clicker")
   syncSessionToRuntime(e)
   focus.target = normalize(e.target)
 
   local function begin(ok)
     if not ok then
-      runtime.phase = "idle"
-      runtime.error = "target window is not focused"
-      publish(true)
-      notifyError(tr("panel.title"), runtime.error)
+      log("focus check failed for " .. tostring(focus.target))
+      failFocus()
       return
     end
     if kind == "macro" or e.delay <= 0 then
       startNow(kind, macro, playMode)
       return
     end
+
     countdown = { kind = kind, macro = macro, playMode = playMode, e = e }
     runtime.phase = "countdown"
     runtime.mode = kind
@@ -477,84 +581,126 @@ requestStart = function(kind, macro, playMode)
   end
 
   if wasActive then
+    log("restarting because a start was requested while active")
     stop("restart")
-    deferredStart = { at = noctalia.nowMs() + 350, kind = kind, macro = macro, playMode = playMode }
+    deferredStart = {
+      at = noctalia.nowMs() + RESTART_DELAY_MS,
+      kind = kind,
+      macro = macro,
+      playMode = playMode,
+    }
     return
   end
 
-  if e.target ~= "" then
-    checkFocus(begin)
-  else
-    begin(true)
-  end
+  checkFocus(begin)
 end
 
 local function applyOverrides(data)
   if type(data) ~= "table" then
     return
   end
-  local rate = data.cps or data.rate
+
+  local rate = C.firstDefined(data.cps, data.rate)
   if rate ~= nil then
-    session.rate = C.clamp(tonumber(rate) or 12, C.RATE_MIN, C.RATE_MAX)
+    session.rate = C.clamp(tonumber(rate) or C.DEFAULTS.rate, C.RATE_MIN, C.RATE_MAX)
   end
   if data.action ~= nil then
     session.action = tostring(data.action)
   end
-  local custom = data.custom_key or data.customKey
+
+  local custom = C.firstDefined(data.custom_key, data.customKey)
   if custom ~= nil then
     session.customKey = tostring(custom)
   end
-  local hold = data.hold_ms or data.hold
+
+  local hold = C.firstDefined(data.hold_ms, data.hold)
   if hold ~= nil then
-    session.hold = C.clamp(tonumber(hold) or 8, 0, 2000)
+    session.hold = C.clamp(tonumber(hold) or C.DEFAULTS.hold, 0, 2000)
   end
-  local jitter = data.jitter_pct or data.jitter
+
+  local jitter = C.firstDefined(data.jitter_pct, data.jitter)
   if jitter ~= nil then
-    session.jitter = C.clamp(tonumber(jitter) or 0, 0, C.JITTER_MAX)
+    session.jitter = C.clamp(tonumber(jitter) or C.DEFAULTS.jitter, 0, C.JITTER_MAX)
   end
-  local delay = data.start_delay or data.delay
+
+  local delay = C.firstDefined(data.start_delay, data.delay)
   if delay ~= nil then
-    session.delay = C.clamp(tonumber(delay) or 0, 0, 10)
+    session.delay = C.clamp(tonumber(delay) or C.DEFAULTS.delay, 0, 10)
   end
-  local duration = data.max_duration or data.duration
+
+  local duration = C.firstDefined(data.max_duration, data.duration)
   if duration ~= nil then
-    session.duration = C.clamp(tonumber(duration) or 0, 0, 86400)
+    session.duration = C.clamp(tonumber(duration) or C.DEFAULTS.duration, 0, 86400)
   end
-  local target = data.target_app or data.target
+
+  local target = C.firstDefined(data.target_app, data.target)
   if target ~= nil then
     session.target = tostring(target)
   end
-  local stopOnFocus = data.stop_on_focus_loss
-  if stopOnFocus == nil then
-    stopOnFocus = data.stopOnFocus
-  end
+
+  local stopOnFocus = C.firstDefined(data.stop_on_focus_loss, data.stopOnFocus)
   if stopOnFocus ~= nil then
     session.stopOnFocus = stopOnFocus == true or stopOnFocus == "true"
   end
-  syncSessionToRuntime(effectiveSession())
+
+  syncSessionToRuntime(effectiveSession(runtime.mode == "fisher" and "fisher" or "clicker"))
+end
+
+local function applyFisherOverrides(data)
+  if type(data) ~= "table" then
+    return
+  end
+
+  local sensitivity = C.firstDefined(data.sensitivity, data.fisher_sensitivity)
+  if sensitivity ~= nil then
+    session.sensitivity = C.clamp(tonumber(sensitivity) or C.FISHER_DEFAULTS.sensitivity, 0.1, 0.99)
+  end
+
+  local timeout = C.firstDefined(data.bite_timeout_s, data.bite_timeout, data.timeout)
+  if timeout ~= nil then
+    session.fisherTimeout = C.clamp(tonumber(timeout) or C.FISHER_DEFAULTS.biteTimeout, 3, 300)
+  end
+
+  local postReel = C.firstDefined(data.post_reel_ms, data.post_reel)
+  if postReel ~= nil then
+    session.postReel = C.clamp(tonumber(postReel) or C.FISHER_DEFAULTS.postReel, 100, 5000)
+  end
+
+  syncSessionToRuntime(effectiveSession(runtime.mode == "fisher" and "fisher" or "clicker"))
 end
 
 local function pushLiveConfig()
-  if runtime.phase ~= "running" or runtime.mode ~= "clicker" then
+  if runtime.phase ~= "running" then
     return
   end
+
+  if runtime.mode == "fisher" then
+    local ok, err = writeHelperConfig(fisherConfig())
+    if not ok then
+      runtime.error = err or "could not update config"
+      publish(true)
+      return
+    end
+    sendSignal("HUP")
+    publish(true)
+    return
+  end
+
+  if runtime.mode ~= "clicker" then
+    return
+  end
+
   local e = effectiveSession()
   syncSessionToRuntime(e)
   focus.target = normalize(e.target)
-  local config = {
-    mode = "repeat",
-    cps = e.rate,
-    hold_ms = e.hold,
-    jitter_pct = e.jitter,
-    max_runtime_s = e.duration,
-    action = C.actionForHelper(e.action, e.customKey),
-  }
-  local ok, err = writeHelperConfig(config)
+
+  local ok, err = writeHelperConfig(helperConfig(e))
   if not ok then
     runtime.error = err or "could not update config"
     publish(true)
     return
   end
+
   sendSignal("HUP")
   if e.duration > 0 then
     runtime.stopAt = runtime.startedAt + e.duration * 1000
@@ -566,12 +712,24 @@ local function pushLiveConfig()
   publish(true)
 end
 
-local function toggle()
-  if runtime.phase == "running" or runtime.phase == "countdown" then
-    stop("toggled")
-  else
-    requestStart("clicker")
+-- The panel tab decides what the shortcut and the widget toggle. Switching to
+-- a tab for a different action stops whatever is running, so the hotkey never
+-- starts a mode the user is not looking at.
+local function selectMode(mode)
+  if mode ~= "clicker" and mode ~= "fisher" then
+    return
   end
+  runtime.toggleMode = mode
+end
+
+local function toggle()
+  if C.isActive(runtime) then
+    stop("toggled")
+    return
+  end
+  local mode = runtime.toggleMode == "fisher" and "fisher" or "clicker"
+  log("toggle: starting " .. mode)
+  requestStart(mode)
 end
 
 local function playMacro(name, playMode)
@@ -622,15 +780,41 @@ local function parsePayload(payload)
   return { name = text }
 end
 
-local function handleCommand(command)
-  if type(command) ~= "table" then
+local function playMacroCommand(kind, data)
+  local name = type(data) == "table" and data.name or data
+  if not name then
+    notifyError(tr("notification.macro_error"), "macro name is required")
     return
   end
-  local kind = command.kind
-  local data = command.data
+
+  local playMode = type(data) == "table" and data.mode or "defined"
+  if kind == "macro-loop" then
+    playMode = "loop"
+  elseif kind == "macro-once" then
+    playMode = "once"
+  end
+  playMacro(tostring(name), playMode)
+end
+
+-- One dispatcher serves both IPC events and panel/widget commands.
+local function dispatch(kind, data)
   if kind == "toggle" then
     applyOverrides(data)
     toggle()
+  elseif kind == "select_mode" then
+    local data_mode = type(data) == "table" and (data.mode or data.name) or data
+    selectMode(data_mode)
+    log(string.format(
+      "mode selected: %s (phase %s, last %s)",
+      tostring(runtime.toggleMode),
+      tostring(runtime.phase),
+      tostring(runtime.mode)
+    ))
+    if C.isActive(runtime) and runtime.mode ~= runtime.toggleMode then
+      stop("switch")
+    else
+      publish(true)
+    end
   elseif kind == "start" then
     applyOverrides(data)
     if runtime.phase == "running" and runtime.mode == "clicker" then
@@ -638,8 +822,22 @@ local function handleCommand(command)
     else
       requestStart("clicker")
     end
-  elseif kind == "stop" then
+  elseif kind == "stop" or kind == "macro-stop" then
     stop("ipc")
+  elseif kind == "fish" then
+    applyOverrides(data)
+    applyFisherOverrides(data)
+    if runtime.phase == "running" and runtime.mode == "fisher" then
+      pushLiveConfig()
+    else
+      requestStart("fisher")
+    end
+  elseif kind == "fish-stop" then
+    stop("ipc")
+  elseif kind == "set_fisher" then
+    applyFisherOverrides(data)
+    pushLiveConfig()
+    publish(true)
   elseif kind == "panic" then
     stop("panic")
   elseif kind == "set" then
@@ -648,7 +846,7 @@ local function handleCommand(command)
     publish(true)
   elseif kind == "set_rate" then
     if data ~= nil then
-      session.rate = C.clamp(tonumber(data) or 12, C.RATE_MIN, C.RATE_MAX)
+      session.rate = C.clamp(tonumber(data) or C.DEFAULTS.rate, C.RATE_MIN, C.RATE_MAX)
       syncSessionToRuntime(effectiveSession())
       pushLiveConfig()
       publish(true)
@@ -660,43 +858,28 @@ local function handleCommand(command)
     publish(true)
   elseif kind == "test" then
     testClick()
-  elseif kind == "macro" then
-    local name = type(data) == "table" and data.name or data
-    if name then
-      playMacro(tostring(name), type(data) == "table" and data.mode or "defined")
-    end
-  elseif kind == "macro-loop" then
-    local name = type(data) == "table" and data.name or data
-    if name then
-      playMacro(tostring(name), "loop")
-    end
-  elseif kind == "macro-once" then
-    local name = type(data) == "table" and data.name or data
-    if name then
-      playMacro(tostring(name), "once")
-    end
+  elseif kind == "macro" or kind == "macro-loop" or kind == "macro-once" then
+    playMacroCommand(kind, data)
   end
 end
 
-local function readStatus(now)
-  if now - lastStatusRead < 200 then
-    return
-  end
-  lastStatusRead = now
-  local raw = noctalia.readFile(C.statusPath())
-  if not raw then
-    if helper.proc and runtime.helper == "starting" then
-      publish(false)
+local function syncHelperError(status)
+  local statusError = tostring(status.error or "")
+  if statusError ~= "" then
+    lastHelperError = statusError
+    runtime.error = statusError
+  elseif lastHelperError ~= "" then
+    -- The helper recovered; drop the error it reported instead of leaving it
+    -- pinned in the widget and panel.
+    if runtime.error == lastHelperError then
+      runtime.error = ""
     end
-    return
+    lastHelperError = ""
   end
-  local status = noctalia.json.decode(raw)
-  if type(status) ~= "table" then
-    return
-  end
+end
 
+local function applyStatus(status)
   helper.pid = tonumber(status.pid) or helper.pid
-  helper.lastSeen = now
   runtime.helperVersion = tostring(status.version or "")
   runtime.helper = status.ready and "ready" or "starting"
   runtime.effectiveCps = tonumber(status.effective_cps) or runtime.effectiveCps
@@ -707,9 +890,37 @@ local function readStatus(now)
   runtime.macroStepCount = tonumber(status.macro_step_count) or runtime.macroStepCount
   runtime.macroRepeat = tonumber(status.macro_repeat) or 0
   runtime.macroRepeatIndex = tonumber(status.macro_repeat_index) or 0
-  if status.error and status.error ~= "" then
-    runtime.error = tostring(status.error)
+  runtime.fisherState = tostring(status.fisher_state or "idle")
+  runtime.fisherCasts = tonumber(status.fisher_casts) or 0
+  runtime.fisherBites = tonumber(status.fisher_bites) or 0
+  runtime.fisherMisses = tonumber(status.fisher_misses) or 0
+  runtime.audioLevel = tonumber(status.audio_level) or 0
+  runtime.matchScore = tonumber(status.match_score) or 0
+  runtime.templateSource = tostring(status.template_source or "")
+  syncHelperError(status)
+end
+
+local function readStatus(now)
+  if now - lastStatusRead < STATUS_POLL_MS then
+    return
   end
+  lastStatusRead = now
+
+  local raw = noctalia.readFile(C.statusPath())
+  if not raw then
+    if helper.proc and runtime.helper == "starting" then
+      publish(false)
+    end
+    return
+  end
+
+  local status = noctalia.json.decode(raw)
+  if type(status) ~= "table" then
+    return
+  end
+
+  helper.lastSeen = now
+  applyStatus(status)
 
   if runtime.phase == "running" then
     if status.running == false then
@@ -723,7 +934,7 @@ local function readStatus(now)
         handleStopReason(reason)
         publish(true)
       end
-    elseif status.updated_at_ms and now - tonumber(status.updated_at_ms) > 3000 then
+    elseif status.updated_at_ms and now - tonumber(status.updated_at_ms) > HELPER_STALE_MS then
       runtime.error = "helper stopped responding"
       stop("heartbeat")
       releaseFallback()
@@ -735,49 +946,101 @@ local function readStatus(now)
   publish(false)
 end
 
-function onIpc(event, payload)
-  local data = parsePayload(payload)
-  if event == "toggle" then
-    applyOverrides(data)
-    toggle()
-  elseif event == "start" then
-    applyOverrides(data)
-    if runtime.phase == "running" and runtime.mode == "clicker" then
-      pushLiveConfig()
-    else
-      requestStart("clicker")
-    end
-  elseif event == "stop" or event == "macro-stop" then
-    stop("ipc")
-  elseif event == "panic" then
-    stop("panic")
-  elseif event == "macro" then
-    if data and data.name then
-      playMacro(data.name, data.mode or "defined")
-    else
-      notifyError(tr("notification.macro_error"), "macro name is required")
-    end
-  elseif event == "macro-loop" then
-    if data and data.name then
-      playMacro(data.name, "loop")
-    else
-      notifyError(tr("notification.macro_error"), "macro name is required")
-    end
-  elseif event == "macro-once" then
-    if data and data.name then
-      playMacro(data.name, "once")
-    else
-      notifyError(tr("notification.macro_error"), "macro name is required")
-    end
+local function writeHeartbeat(now)
+  if now - lastHeartbeat < HEARTBEAT_MS then
+    return
   end
+  lastHeartbeat = now
+  ensureRuntimeDir()
+  noctalia.writeFile(C.heartbeatPath(), tostring(now))
+end
+
+local function reapHelper(now)
+  if runtime.phase ~= "idle" or not helper.proc or helper.lastSeen <= 0 then
+    return
+  end
+  if now - helper.lastSeen <= HELPER_STALE_MS then
+    return
+  end
+  helper.proc = false
+  helper.pid = nil
+  helper.path = nil
+  runtime.helper = "stopped"
+  publish(true)
+end
+
+local function handlePendingStart(now)
+  if not pendingStart or runtime.helper ~= "ready" then
+    return
+  end
+  local item = pendingStart
+  pendingStart = nil
+  if now - item.at < HELPER_START_TIMEOUT_MS then
+    startNow(item.kind, item.macro, item.playMode)
+  else
+    runtime.phase = "error"
+    runtime.error = "helper did not become ready"
+    publish(true)
+  end
+end
+
+local function handleDeferredStart(now)
+  if not deferredStart or now < deferredStart.at then
+    return
+  end
+  local item = deferredStart
+  deferredStart = nil
+  local e = effectiveSession(item.kind == "fisher" and "fisher" or "clicker")
+  focus.target = normalize(e.target)
+
+  checkFocus(function(ok)
+    if not ok then
+      runtime.error = "target window is not focused"
+      publish(true)
+      return
+    end
+    if item.kind == "macro" or e.delay <= 0 then
+      startNow(item.kind, item.macro, item.playMode)
+    else
+      requestStart(item.kind, item.macro, item.playMode)
+    end
+  end)
+end
+
+local function handleCountdown(now)
+  if runtime.phase ~= "countdown" or not countdown then
+    return
+  end
+
+  runtime.countdownRemaining = math.max(0, (runtime.countdownEndsAt - now) / 1000)
+  if now < runtime.countdownEndsAt then
+    publish(false)
+    return
+  end
+
+  local item = countdown
+  countdown = nil
+  local e = effectiveSession(item.kind == "fisher" and "fisher" or "clicker")
+  focus.target = normalize(e.target)
+  checkFocus(function(ok)
+    if not ok then
+      failFocus()
+      return
+    end
+    startNow(item.kind, item.macro, item.playMode)
+  end)
+end
+
+function onIpc(event, payload)
+  dispatch(event, parsePayload(payload))
 end
 
 function onConfigChanged()
   readConfig()
-  if runtime.phase == "running" and runtime.mode == "clicker" then
+  if runtime.phase == "running" and (runtime.mode == "clicker" or runtime.mode == "fisher") then
     pushLiveConfig()
   elseif runtime.phase == "countdown" and countdown then
-    countdown.e = effectiveSession()
+    countdown.e = effectiveSession(countdown.kind == "fisher" and "fisher" or "clicker")
     runtime.countdownEndsAt = noctalia.nowMs() + countdown.e.delay * 1000
     runtime.countdownRemaining = countdown.e.delay
   end
@@ -806,91 +1069,18 @@ end
 function update()
   local now = noctalia.nowMs()
 
-  if now - lastHeartbeat >= 1000 then
-    lastHeartbeat = now
-    ensureRuntimeDir()
-    noctalia.writeFile(C.heartbeatPath(), tostring(now))
-  end
-
+  writeHeartbeat(now)
   readStatus(now)
-
-  if runtime.phase == "idle" and helper.proc and helper.lastSeen > 0 and now - helper.lastSeen > 3000 then
-    helper.proc = false
-    helper.pid = nil
-    helper.path = nil
-    runtime.helper = "stopped"
-    publish(true)
-  end
-
-  if pendingStart and runtime.helper == "ready" then
-    local item = pendingStart
-    pendingStart = nil
-    if now - item.at < 3000 then
-      startNow(item.kind, item.macro, item.playMode)
-    else
-      runtime.phase = "error"
-      runtime.error = "helper did not become ready"
-      publish(true)
-    end
-  end
-
-  if deferredStart and now >= deferredStart.at then
-    local item = deferredStart
-    deferredStart = nil
-    local e = effectiveSession()
-    if e.target ~= "" then
-      checkFocus(function(ok)
-        if ok then
-          if item.kind == "macro" or e.delay <= 0 then
-            startNow(item.kind, item.macro, item.playMode)
-          else
-            requestStart(item.kind, item.macro, item.playMode)
-          end
-        else
-          runtime.error = "target window is not focused"
-          publish(true)
-        end
-      end)
-    else
-      if item.kind == "macro" or e.delay <= 0 then
-        startNow(item.kind, item.macro, item.playMode)
-      else
-        requestStart(item.kind, item.macro, item.playMode)
-      end
-    end
-  end
-
-  if runtime.phase == "countdown" and countdown then
-    runtime.countdownRemaining = math.max(0, (runtime.countdownEndsAt - now) / 1000)
-    if now >= runtime.countdownEndsAt then
-      local item = countdown
-      countdown = nil
-      local e = effectiveSession()
-      local function begin(ok)
-        if ok then
-          startNow(item.kind, item.macro, item.playMode)
-        else
-          runtime.phase = "idle"
-          runtime.error = "target window is not focused"
-          publish(true)
-          notifyError(tr("panel.title"), runtime.error)
-        end
-      end
-      if e.target ~= "" then
-        checkFocus(begin)
-      else
-        begin(true)
-      end
-    else
-      publish(false)
-    end
-  end
+  reapHelper(now)
+  handlePendingStart(now)
+  handleDeferredStart(now)
+  handleCountdown(now)
 
   if runtime.phase == "running" and runtime.stopAt > 0 and now >= runtime.stopAt then
     stop("duration")
   end
 
-  if runtime.phase == "running" and focus.active and not focus.checking and now - focus.lastCheck >= 500 then
+  if runtime.phase == "running" and focus.active and not focus.checking and now - focus.lastCheck >= FOCUS_POLL_MS then
     focus.lastCheck = now
     checkFocus(function(ok)
       if not ok and runtime.phase == "running" then
@@ -918,5 +1108,5 @@ noctalia.state.watch("command", function(command)
     return
   end
   lastCommandSeq = command.seq
-  handleCommand(command)
+  dispatch(command.kind, command.data)
 end)

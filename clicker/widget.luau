@@ -10,8 +10,9 @@ local function tr(key)
   return noctalia.tr(key)
 end
 
-local function isActive(runtime)
-  return runtime.phase == "running" or runtime.phase == "countdown"
+-- The panel tab decides which action the widget and the hotkey toggle.
+local function targetMode(runtime)
+  return runtime.toggleMode == "fisher" and "fisher" or "clicker"
 end
 
 local function statusLabel(runtime)
@@ -27,22 +28,52 @@ local function statusLabel(runtime)
       end
       return "M"
     end
+    if runtime.mode == "fisher" then
+      if showRate then
+        return tostring(runtime.fisherBites or 0)
+      end
+      return "F"
+    end
     if showRate then
       return C.rateLabel(runtime.effectiveCps or runtime.sessionRate or 0)
     end
   elseif showRate then
+    if targetMode(runtime) == "fisher" then
+      return tostring(runtime.fisherBites or 0)
+    end
     return C.rateLabel(runtime.sessionRate or 0)
   end
   return ""
 end
 
 local function tooltip(runtime)
+  local modeLabel = tr("panel.tab.clicker")
+  if runtime.phase == "running" and runtime.mode == "macro" then
+    modeLabel = "Macro: " .. tostring(runtime.name or "")
+  elseif targetMode(runtime) == "fisher" then
+    modeLabel = tr("panel.tab.fishing")
+  end
+
   local rows = {
-    { key = tr("panel.mode"), value = runtime.mode == "macro" and ("Macro: " .. tostring(runtime.name or "")) or tr("panel.tab.clicker") },
-    { key = tr("panel.rate"), value = C.rateLabel(runtime.effectiveCps or runtime.sessionRate or 0) },
-    { key = tr("panel.clicks"), value = tostring(runtime.clicks or 0) .. " · " .. tostring(runtime.keys or 0) .. " keys" },
-    { key = tr("panel.helper"), value = runtime.helper == "ready" and tr("panel.helper_ready") or tostring(runtime.helper or "") },
+    { key = tr("panel.mode"), value = modeLabel },
   }
+  local active = C.isActive(runtime)
+  local fisherStats = active and runtime.mode == "fisher"
+  if not active then
+    fisherStats = targetMode(runtime) == "fisher"
+  end
+  if fisherStats then
+    table.insert(rows, { key = tr("panel.fishing.caught_short"), value = tostring(runtime.fisherBites or 0) })
+    table.insert(rows, {
+      key = tr("panel.fishing.casts_short"),
+      value = string.format("%d · %d %s", runtime.fisherCasts or 0, runtime.fisherMisses or 0, tr("panel.fishing.misses_short")),
+    })
+    table.insert(rows, { key = tr("panel.fishing.match_short"), value = string.format("%.2f", tonumber(runtime.matchScore) or 0) })
+  else
+    table.insert(rows, { key = tr("panel.rate"), value = C.rateLabel(runtime.effectiveCps or runtime.sessionRate or 0) })
+    table.insert(rows, { key = tr("panel.clicks"), value = tostring(runtime.clicks or 0) .. " · " .. tostring(runtime.keys or 0) .. " keys" })
+  end
+  table.insert(rows, { key = tr("panel.helper"), value = runtime.helper == "ready" and tr("panel.helper_ready") or tostring(runtime.helper or "") })
   if runtime.phase == "running" and runtime.mode == "macro" and (runtime.macroRepeat or 0) > 0 then
     table.insert(rows, {
       key = tr("panel.macro.repeat"),
@@ -57,13 +88,14 @@ end
 
 local function render(runtime)
   runtime = runtime or { phase = "idle", helper = "starting", sessionRate = 12 }
-  local active = isActive(runtime)
+  local active = C.isActive(runtime)
   if hideWhenIdle and not active then
     barWidget.setVisible(false)
     return
   end
+  local fishing = targetMode(runtime) == "fisher"
   barWidget.setVisible(true)
-  barWidget.setGlyph("click")
+  barWidget.setGlyph(fishing and "phishing" or "click")
   barWidget.setGlyphColor(active and "primary" or "on_surface_variant")
   barWidget.setText(statusLabel(runtime))
   barWidget.setTooltip(tooltip(runtime))
@@ -77,7 +109,7 @@ end)
 
 function onClick()
   local runtime = noctalia.state.get("runtime") or {}
-  if isActive(runtime) then
+  if C.isActive(runtime) then
     C.sendCommand("stop")
   else
     C.sendCommand("toggle")

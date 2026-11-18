@@ -1,6 +1,6 @@
 [package]
 name = "clickerd"
-version = "1.0.0"
+version = "1.2.0"
 edition = "2021"
 license = "MIT"
 description = "Input sequencer for the Noctalia Clicker plugin"
@@ -10,6 +10,14 @@ repository = "https://github.com/C010UR/noctalia-clicker"
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+thiserror = "2"
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
 
 [profile.release]
 opt-level = 2

@@ -1,20 +1,41 @@
 --!nonstrict
--- Shared helpers for the Clicker plugin entries.
+-- Shared helpers for the Clicker plugin entries: settings defaults, paths,
+-- macro persistence and validation, and label formatting.
 
 local M = {}
 
 M.PLUGIN_ID = "c010ur/clicker"
-M.SERVICE_ID = M.PLUGIN_ID .. ":service"
 M.PANEL_ID = M.PLUGIN_ID .. ":panel"
-M.WIDGET_ID = M.PLUGIN_ID .. ":widget"
 
 M.RATE_MIN = 1
 M.RATE_MAX = 1000
-M.HOLD_MIN = 1
-M.HOLD_MAX = 100
 M.JITTER_MAX = 50
 M.STEP_MAX = 256
 M.MACRO_NAME_PATTERN = "^[%w_-]+$"
+
+-- Defaults mirror plugin.toml. Keep them here so the service, panel, widget and
+-- helper fallbacks cannot drift apart.
+M.DEFAULTS = {
+  rate = 12,
+  hold = 20,
+  jitter = 0,
+  delay = 3,
+  duration = 0,
+}
+
+-- Fisher defaults mirror plugin.toml for the same reason.
+M.FISHER_DEFAULTS = {
+  sensitivity = 0.70,
+  biteTimeout = 30,
+  settle = 1200,
+  press = 40,
+  postReel = 600,
+  recover = 350,
+  minInterval = 1200,
+  maxCasts = 0,
+  maxRuntime = 0,
+  targetApp = "steam_app_105600",
+}
 
 M.MOUSE_BUTTONS = { "left", "right", "middle", "side", "extra", "forward", "back" }
 M.ACTION_OPTIONS = { "left", "right", "middle", "space", "custom" }
@@ -45,6 +66,17 @@ function M.isNumber(value)
   return type(value) == "number" and value == value and value ~= math.huge and value ~= -math.huge
 end
 
+-- Returns the first argument that is not nil, preserving `false` values.
+function M.firstDefined(...)
+  for index = 1, select("#", ...) do
+    local value = select(index, ...)
+    if value ~= nil then
+      return value
+    end
+  end
+  return nil
+end
+
 function M.deepCopy(value)
   if type(value) ~= "table" then
     return value
@@ -56,11 +88,19 @@ function M.deepCopy(value)
   return copy
 end
 
+function M.isMouseButton(value)
+  return MOUSE_SET[value] == true
+end
+
+function M.isActive(runtime)
+  return runtime.phase == "running" or runtime.phase == "countdown"
+end
+
 function M.cpsFrom(rate, unit)
   if unit == "cpm" then
-    return (tonumber(rate) or 12) / 60
+    return (tonumber(rate) or M.DEFAULTS.rate) / 60
   end
-  return tonumber(rate) or 12
+  return tonumber(rate) or M.DEFAULTS.rate
 end
 
 function M.runtimeDir()
@@ -149,14 +189,70 @@ function M.sortedMacroNames(macros)
   return names
 end
 
+local function validTiming(value, maximum)
+  return M.isNumber(value) and value >= 0 and value <= maximum
+end
+
+local function validateStep(index, step)
+  local prefix = "step " .. index .. ": "
+  if type(step) ~= "table" then
+    return false, prefix .. "not a table"
+  end
+
+  local kind = step.type
+  if kind == "key" then
+    if type(step.chord) ~= "string" or step.chord == "" or string.match(step.chord, "%s") then
+      return false, prefix .. "enter a key or chord without spaces"
+    end
+    if not validTiming(step.hold_ms, 2000) then
+      return false, prefix .. "hold must be 0-2000 ms"
+    end
+    if not validTiming(step.delay_ms, 60000) then
+      return false, prefix .. "delay must be 0-60000 ms"
+    end
+  elseif kind == "mouse" then
+    if not MOUSE_SET[step.button] then
+      return false, prefix .. "unknown mouse button"
+    end
+    if not validTiming(step.hold_ms, 2000) then
+      return false, prefix .. "hold must be 0-2000 ms"
+    end
+    if not validTiming(step.delay_ms, 60000) then
+      return false, prefix .. "delay must be 0-60000 ms"
+    end
+  elseif kind == "delay" then
+    if not validTiming(step.ms, 60000) then
+      return false, prefix .. "delay must be 0-60000 ms"
+    end
+  elseif kind == "scroll" then
+    if step.direction ~= "up" and step.direction ~= "down" then
+      return false, prefix .. "direction must be up or down"
+    end
+    if not M.isNumber(step.steps) or step.steps < 1 or step.steps > 10 then
+      return false, prefix .. "scroll steps must be 1-10"
+    end
+  else
+    return false, prefix .. "unknown step type"
+  end
+
+  return true
+end
+
 function M.validateMacro(macro)
   if type(macro) ~= "table" then
     return false, "macro is not a table"
   end
+
   local name = macro.name
-  if type(name) ~= "string" or name == "" or #name > 64 or not string.match(name, M.MACRO_NAME_PATTERN) then
+  if
+    type(name) ~= "string"
+    or name == ""
+    or #name > 64
+    or not string.match(name, M.MACRO_NAME_PATTERN)
+  then
     return false, "name must be 1-64 letters, digits, underscores, or dashes"
   end
+
   if type(macro.steps) ~= "table" then
     return false, "steps are missing"
   end
@@ -169,62 +265,25 @@ function M.validateMacro(macro)
   end
 
   for index, step in ipairs(macro.steps) do
-    local prefix = "step " .. index .. ": "
-    if type(step) ~= "table" then
-      return false, prefix .. "not a table"
-    end
-    local kind = step.type
-    if kind == "key" then
-      if type(step.chord) ~= "string" or step.chord == "" or string.match(step.chord, "%s") then
-        return false, prefix .. "enter a key or chord without spaces"
-      end
-      if not M.isNumber(step.hold_ms) or step.hold_ms < 0 or step.hold_ms > 2000 then
-        return false, prefix .. "hold must be 0-2000 ms"
-      end
-      if not M.isNumber(step.delay_ms) or step.delay_ms < 0 or step.delay_ms > 60000 then
-        return false, prefix .. "delay must be 0-60000 ms"
-      end
-    elseif kind == "mouse" then
-      if not MOUSE_SET[step.button] then
-        return false, prefix .. "unknown mouse button"
-      end
-      if not M.isNumber(step.hold_ms) or step.hold_ms < 0 or step.hold_ms > 2000 then
-        return false, prefix .. "hold must be 0-2000 ms"
-      end
-      if not M.isNumber(step.delay_ms) or step.delay_ms < 0 or step.delay_ms > 60000 then
-        return false, prefix .. "delay must be 0-60000 ms"
-      end
-    elseif kind == "delay" then
-      if not M.isNumber(step.ms) or step.ms < 0 or step.ms > 60000 then
-        return false, prefix .. "delay must be 0-60000 ms"
-      end
-    elseif kind == "scroll" then
-      if step.direction ~= "up" and step.direction ~= "down" then
-        return false, prefix .. "direction must be up or down"
-      end
-      if not M.isNumber(step.steps) or step.steps < 1 or step.steps > 10 then
-        return false, prefix .. "scroll steps must be 1-10"
-      end
-    else
-      return false, prefix .. "unknown step type"
+    local ok, err = validateStep(index, step)
+    if not ok then
+      return false, err
     end
   end
 
   if macro.repeats ~= nil then
-    if not M.isNumber(macro.repeats) or macro.repeats < 0 or macro.repeats > 1000000 or macro.repeats ~= math.floor(macro.repeats) then
+    local repeats = macro.repeats
+    if not M.isNumber(repeats) or repeats < 0 or repeats > 1000000 or repeats ~= math.floor(repeats) then
       return false, "repeat must be a whole number from 0 to 1000000"
     end
   end
-  if macro.loop_delay_ms ~= nil then
-    if not M.isNumber(macro.loop_delay_ms) or macro.loop_delay_ms < 0 or macro.loop_delay_ms > 60000 then
-      return false, "loop delay must be 0-60000 ms"
-    end
+  if macro.loop_delay_ms ~= nil and not validTiming(macro.loop_delay_ms, 60000) then
+    return false, "loop delay must be 0-60000 ms"
   end
-  if macro.max_runtime_s ~= nil then
-    if not M.isNumber(macro.max_runtime_s) or macro.max_runtime_s < 0 or macro.max_runtime_s > 86400 then
-      return false, "max runtime must be 0-86400 seconds"
-    end
+  if macro.max_runtime_s ~= nil and not validTiming(macro.max_runtime_s, 86400) then
+    return false, "max runtime must be 0-86400 seconds"
   end
+
   return true
 end
 
@@ -251,24 +310,13 @@ function M.actionLabel(action, customKey)
 end
 
 function M.actionForHelper(action, customKey)
-  if action == "left" or action == "right" or action == "middle" or action == "side" or action == "extra" or action == "forward" or action == "back" then
+  if M.isMouseButton(action) then
     return { type = "mouse", button = action }
   end
   if action == "space" then
     return { type = "key", chord = "space" }
   end
   return { type = "key", chord = customKey or "space" }
-end
-
-function M.phaseLabel(phase)
-  if phase == "running" then
-    return "Running"
-  elseif phase == "countdown" then
-    return "Starting"
-  elseif phase == "error" then
-    return "Error"
-  end
-  return "Idle"
 end
 
 function M.rateLabel(cps)

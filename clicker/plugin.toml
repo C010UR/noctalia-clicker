@@ -1,11 +1,11 @@
 id = "c010ur/clicker"
 name = "Clicker"
-version = "1.0.0"
+version = "1.2.0"
 plugin_api = 43
 author = "c010ur"
 license = "MIT"
 icon = "click"
-description = "Precise autoclicker and macro engine with focus-aware safety."
+description = "Autoclicker, macro engine, and Terraria Fisher with focus-aware safety."
 tags = ["gaming", "utility", "automation"]
 
 [[setting]]
@@ -56,7 +56,7 @@ key = "hold_ms"
 type = "int"
 label_key = "settings.hold_ms.label"
 description_key = "settings.hold_ms.description"
-default = 8
+default = 20
 min = 1
 max = 100
 step = 1
@@ -160,6 +160,142 @@ default = 600
 min = 0
 max = 86400
 step = 30
+advanced = true
+
+[[setting]]
+key = "fisher_target_app"
+type = "string"
+label_key = "settings.fisher_target_app.label"
+description_key = "settings.fisher_target_app.description"
+default = "steam_app_105600"
+advanced = true
+
+[[setting]]
+key = "fisher_cast_button"
+type = "select"
+label_key = "settings.fisher_cast_button.label"
+description_key = "settings.fisher_cast_button.description"
+default = "left"
+options = [
+  { value = "left", label_key = "settings.fisher_cast_button.left" },
+  { value = "right", label_key = "settings.fisher_cast_button.right" },
+]
+
+[[setting]]
+key = "fisher_press_ms"
+type = "int"
+label_key = "settings.fisher_press_ms.label"
+description_key = "settings.fisher_press_ms.description"
+default = 40
+min = 5
+max = 500
+step = 5
+advanced = true
+
+[[setting]]
+key = "fisher_settle_ms"
+type = "int"
+label_key = "settings.fisher_settle_ms.label"
+description_key = "settings.fisher_settle_ms.description"
+default = 1200
+min = 0
+max = 5000
+step = 50
+
+[[setting]]
+key = "fisher_bite_timeout"
+type = "double"
+label_key = "settings.fisher_bite_timeout.label"
+description_key = "settings.fisher_bite_timeout.description"
+default = 30.0
+min = 3.0
+max = 300.0
+step = 1.0
+
+[[setting]]
+key = "fisher_post_reel_ms"
+type = "int"
+label_key = "settings.fisher_post_reel_ms.label"
+description_key = "settings.fisher_post_reel_ms.description"
+default = 600
+min = 100
+max = 5000
+step = 50
+
+[[setting]]
+key = "fisher_recover_ms"
+type = "int"
+label_key = "settings.fisher_recover_ms.label"
+description_key = "settings.fisher_recover_ms.description"
+default = 350
+min = 0
+max = 5000
+step = 50
+advanced = true
+
+[[setting]]
+key = "fisher_max_casts"
+type = "int"
+label_key = "settings.fisher_max_casts.label"
+description_key = "settings.fisher_max_casts.description"
+default = 0
+min = 0
+max = 1000000
+step = 10
+
+[[setting]]
+key = "fisher_max_runtime"
+type = "int"
+label_key = "settings.fisher_max_runtime.label"
+description_key = "settings.fisher_max_runtime.description"
+default = 0
+min = 0
+max = 86400
+step = 60
+
+[[setting]]
+key = "fisher_sensitivity"
+type = "double"
+label_key = "settings.fisher_sensitivity.label"
+description_key = "settings.fisher_sensitivity.description"
+default = 0.70
+min = 0.1
+max = 0.99
+step = 0.01
+
+[[setting]]
+key = "fisher_min_interval"
+type = "int"
+label_key = "settings.fisher_min_interval.label"
+description_key = "settings.fisher_min_interval.description"
+default = 1200
+min = 100
+max = 10000
+step = 50
+advanced = true
+
+[[setting]]
+key = "fisher_audio_device"
+type = "string"
+label_key = "settings.fisher_audio_device.label"
+description_key = "settings.fisher_audio_device.description"
+default = ""
+advanced = true
+
+[[setting]]
+key = "fisher_template"
+type = "file"
+label_key = "settings.fisher_template.label"
+description_key = "settings.fisher_template.description"
+default = ""
+advanced = true
+
+[[setting]]
+key = "fisher_pitch_variants"
+type = "bool"
+label_key = "settings.fisher_pitch_variants.label"
+description_key = "settings.fisher_pitch_variants.description"
+default = true
 advanced = true
 
 [[service]]
