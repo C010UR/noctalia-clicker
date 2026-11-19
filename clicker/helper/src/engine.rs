@@ -386,6 +386,13 @@ impl Engine {
             }
 
             if bite {
+                // The splash starts a frame or two before the game marks the
+                // bobber as ready. Clicking immediately can reel too early and
+                // lose the catch, so give it one or two frames to settle.
+                let reel_delay = self.config.fisher.reel_delay_ms;
+                if let Some(reason) = self.wait_for(time::millis(reel_delay)) {
+                    return Ok(reason);
+                }
                 self.status.fisher_state = "reeling".into();
                 if let Some(reason) = self.fish_tap(&action, settings.press_ms)? {
                     return Ok(reason);

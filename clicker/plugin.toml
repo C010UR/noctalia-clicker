@@ -1,6 +1,6 @@
 id = "c010ur/clicker"
 name = "Clicker"
-version = "1.2.1"
+version = "1.2.2"
 plugin_api = 43
 author = "c010ur"
 license = "MIT"
@@ -211,6 +211,16 @@ default = 30.0
 min = 3.0
 max = 300.0
 step = 1.0
+
+[[setting]]
+key = "fisher_reel_delay_ms"
+type = "int"
+label_key = "settings.fisher_reel_delay_ms.label"
+description_key = "settings.fisher_reel_delay_ms.description"
+default = 33
+min = 0
+max = 200
+step = 1
 
 [[setting]]
 key = "fisher_post_reel_ms"

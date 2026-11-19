@@ -211,6 +211,7 @@ or running, and clicking it toggles the selected action.
 | Cast (left click) | 40 ms press | `fisher_press_ms` |
 | Ignore audio after casting | 1200 ms | `fisher_settle_ms` |
 | Wait for a bite | up to 30 s | `fisher_bite_timeout` |
+| Wait after a bite before reeling | 33 ms | `fisher_reel_delay_ms` |
 | Reel in on a bite | 40 ms press | `fisher_press_ms` |
 | Pause after a catch | 600 ms | `fisher_post_reel_ms` |
 | Reel in an empty line, then recast | 350 ms | `fisher_recover_ms` |
@@ -227,6 +228,12 @@ sounds stay below ~0.65. The default `fisher_sensitivity` of 0.70 sits between
 them: raise it if you get false reels, lower it if bites are missed.
 `fisher_pitch_variants` matches ±5 semitones of pitch shift, which the game
 applies randomly to every splash.
+
+`fisher_reel_delay_ms` waits one or two frames after the match before clicking.
+The splash can play a frame before Terraria marks the bobber as ready; the
+default 33 ms (two frames at 60 FPS) prevents reeling too early and losing the
+catch. Raise it if catches are still missed, or lower it toward 17 ms for the
+fastest response.
 
 To check the audio path without sending any input:
 

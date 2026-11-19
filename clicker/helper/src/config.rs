@@ -27,6 +27,7 @@ pub const DEFAULT_CAST_BUTTON: MouseButton = MouseButton::Left;
 pub const DEFAULT_PRESS_MS: f64 = 40.0;
 pub const DEFAULT_SETTLE_MS: f64 = 1_200.0;
 pub const DEFAULT_BITE_TIMEOUT_S: f64 = 30.0;
+pub const DEFAULT_REEL_DELAY_MS: f64 = 33.0;
 pub const DEFAULT_POST_REEL_MS: f64 = 600.0;
 pub const DEFAULT_RECOVER_MS: f64 = 350.0;
 pub const DEFAULT_SENSITIVITY: f64 = 0.70;
@@ -220,6 +221,11 @@ pub struct FisherConfig {
     #[serde(default = "default_bite_timeout_s")]
     pub bite_timeout_s: f64,
 
+    /// Pause after hearing a bite before reeling in, so the game has finished
+    /// registering it. About two frames at 60 FPS.
+    #[serde(default = "default_reel_delay_ms")]
+    pub reel_delay_ms: f64,
+
     /// Pause after reeling in before the next cast.
     #[serde(default = "default_post_reel_ms")]
     pub post_reel_ms: f64,
@@ -260,6 +266,7 @@ impl Default for FisherConfig {
             press_ms: DEFAULT_PRESS_MS,
             settle_ms: DEFAULT_SETTLE_MS,
             bite_timeout_s: DEFAULT_BITE_TIMEOUT_S,
+            reel_delay_ms: DEFAULT_REEL_DELAY_MS,
             post_reel_ms: DEFAULT_POST_REEL_MS,
             recover_ms: DEFAULT_RECOVER_MS,
             max_casts: 0,
@@ -277,6 +284,7 @@ impl FisherConfig {
         validate_range("fisher.press_ms", self.press_ms, 5.0, 500.0)?;
         validate_range("fisher.settle_ms", self.settle_ms, 0.0, 5_000.0)?;
         validate_range("fisher.bite_timeout_s", self.bite_timeout_s, 3.0, 300.0)?;
+        validate_range("fisher.reel_delay_ms", self.reel_delay_ms, 0.0, 200.0)?;
         validate_range("fisher.post_reel_ms", self.post_reel_ms, 100.0, 5_000.0)?;
         validate_range("fisher.recover_ms", self.recover_ms, 0.0, 5_000.0)?;
         validate_range("fisher.sensitivity", self.sensitivity, 0.1, 0.99)?;
@@ -476,6 +484,10 @@ fn default_bite_timeout_s() -> f64 {
     DEFAULT_BITE_TIMEOUT_S
 }
 
+fn default_reel_delay_ms() -> f64 {
+    DEFAULT_REEL_DELAY_MS
+}
+
 fn default_post_reel_ms() -> f64 {
     DEFAULT_POST_REEL_MS
 }
@@ -532,6 +544,16 @@ mod tests {
         assert_eq!(config.cps, 30.0);
         assert_eq!(config.hold_ms, DEFAULT_HOLD_MS);
         assert_eq!(config.jitter_pct, 0.0);
+    }
+
+    #[test]
+    fn fisher_reel_delay_defaults_and_bounds() {
+        let config = Config::from_json(r#"{"mode": "fisher"}"#).unwrap();
+        assert_eq!(config.fisher.reel_delay_ms, DEFAULT_REEL_DELAY_MS);
+        assert!(Config::from_json(r#"{"mode": "fisher", "fisher": {"reel_delay_ms": 0}}"#).is_ok());
+        assert!(
+            Config::from_json(r#"{"mode": "fisher", "fisher": {"reel_delay_ms": 201}}"#).is_err()
+        );
     }
 
     #[test]

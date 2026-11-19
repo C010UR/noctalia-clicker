@@ -44,6 +44,7 @@ local function syncDraft(r)
     stopOnFocus = r.sessionStopOnFocus ~= false,
     sensitivity = tonumber(r.sessionSensitivity) or C.FISHER_DEFAULTS.sensitivity,
     biteTimeout = tonumber(r.sessionBiteTimeout) or C.FISHER_DEFAULTS.biteTimeout,
+    reelDelay = tonumber(r.sessionReelDelay) or C.FISHER_DEFAULTS.reelDelay,
     postReel = tonumber(r.sessionPostReel) or C.FISHER_DEFAULTS.postReel,
   }
 end
@@ -66,6 +67,7 @@ local function sendFisherSet()
   C.sendCommand("set_fisher", {
     sensitivity = draft.sensitivity,
     bite_timeout_s = draft.biteTimeout,
+    reel_delay_ms = draft.reelDelay,
     post_reel_ms = draft.postReel,
   })
 end
@@ -490,6 +492,11 @@ renderFishing = function(r)
       string.format("%s · %.0f s", tr("panel.fishing.bite_timeout"), draft.biteTimeout),
       "",
       fisherSlider("biteTimeout", 3, 120, 1, draft.biteTimeout)
+    ),
+    sliderRow(
+      string.format("%s · %.0f ms", tr("panel.fishing.reel_delay"), draft.reelDelay),
+      "",
+      fisherSlider("reelDelay", 0, 200, 1, draft.reelDelay)
     ),
     sliderRow(
       string.format("%s · %.0f ms", tr("panel.fishing.cast_delay"), draft.postReel),

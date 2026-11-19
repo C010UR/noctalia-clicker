@@ -27,6 +27,7 @@ M.DEFAULTS = {
 M.FISHER_DEFAULTS = {
   sensitivity = 0.70,
   biteTimeout = 30,
+  reelDelay = 33,
   settle = 1200,
   press = 40,
   postReel = 600,

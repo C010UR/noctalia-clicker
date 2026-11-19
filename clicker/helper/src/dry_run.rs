@@ -29,8 +29,8 @@ fn describe_fisher(out: &mut String, config: &Config) {
     );
     let _ = writeln!(
         out,
-        "  detection: sensitivity {:.2}, refractory {:.0} ms, pitch variants {}",
-        fisher.sensitivity, fisher.min_interval_ms, fisher.pitch_variants
+        "  detection: sensitivity {:.2}, refractory {:.0} ms, pitch variants {}, reel delay {:.0} ms",
+        fisher.sensitivity, fisher.min_interval_ms, fisher.pitch_variants, fisher.reel_delay_ms
     );
     let _ = writeln!(
         out,

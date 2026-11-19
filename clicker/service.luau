@@ -55,6 +55,7 @@ local runtime = {
   sessionStopOnFocus = true,
   sessionSensitivity = C.FISHER_DEFAULTS.sensitivity,
   sessionBiteTimeout = C.FISHER_DEFAULTS.biteTimeout,
+  sessionReelDelay = C.FISHER_DEFAULTS.reelDelay,
   sessionPostReel = C.FISHER_DEFAULTS.postReel,
 }
 
@@ -120,6 +121,7 @@ local function readConfig()
   cfg.fisherPressMs = tonumber(noctalia.getConfig("fisher_press_ms")) or C.FISHER_DEFAULTS.press
   cfg.fisherSettleMs = tonumber(noctalia.getConfig("fisher_settle_ms")) or C.FISHER_DEFAULTS.settle
   cfg.fisherBiteTimeout = tonumber(noctalia.getConfig("fisher_bite_timeout")) or C.FISHER_DEFAULTS.biteTimeout
+  cfg.fisherReelDelay = tonumber(noctalia.getConfig("fisher_reel_delay_ms")) or C.FISHER_DEFAULTS.reelDelay
   cfg.fisherPostReel = tonumber(noctalia.getConfig("fisher_post_reel_ms")) or C.FISHER_DEFAULTS.postReel
   cfg.fisherRecover = tonumber(noctalia.getConfig("fisher_recover_ms")) or C.FISHER_DEFAULTS.recover
   cfg.fisherMaxCasts = tonumber(noctalia.getConfig("fisher_max_casts")) or C.FISHER_DEFAULTS.maxCasts
@@ -163,9 +165,11 @@ end
 local function effectiveFisher()
   local sensitivity = C.firstDefined(session.sensitivity, cfg.fisherSensitivity)
   local timeout = C.firstDefined(session.fisherTimeout, cfg.fisherBiteTimeout)
+  local reelDelay = C.firstDefined(session.reelDelay, cfg.fisherReelDelay)
   return {
     sensitivity = C.clamp(tonumber(sensitivity) or C.FISHER_DEFAULTS.sensitivity, 0.1, 0.99),
     biteTimeout = C.clamp(tonumber(timeout) or C.FISHER_DEFAULTS.biteTimeout, 3, 300),
+    reelDelay = C.clamp(tonumber(reelDelay) or C.FISHER_DEFAULTS.reelDelay, 0, 200),
     postReel = C.clamp(tonumber(C.firstDefined(session.postReel, cfg.fisherPostReel)) or C.FISHER_DEFAULTS.postReel, 100, 5000),
     runtimeLimit = tonumber(cfg.fisherMaxRuntime) or 0,
   }
@@ -184,6 +188,7 @@ local function syncSessionToRuntime(e)
   local fisher = effectiveFisher()
   runtime.sessionSensitivity = fisher.sensitivity
   runtime.sessionBiteTimeout = fisher.biteTimeout
+  runtime.sessionReelDelay = fisher.reelDelay
   runtime.sessionPostReel = fisher.postReel
 end
 
@@ -255,6 +260,7 @@ local function fisherConfig()
       press_ms = cfg.fisherPressMs,
       settle_ms = cfg.fisherSettleMs,
       bite_timeout_s = fisher.biteTimeout,
+      reel_delay_ms = fisher.reelDelay,
       post_reel_ms = fisher.postReel,
       recover_ms = cfg.fisherRecover,
       max_casts = cfg.fisherMaxCasts,
@@ -668,6 +674,11 @@ local function applyFisherOverrides(data)
   local timeout = C.firstDefined(data.bite_timeout_s, data.bite_timeout, data.timeout)
   if timeout ~= nil then
     session.fisherTimeout = C.clamp(tonumber(timeout) or C.FISHER_DEFAULTS.biteTimeout, 3, 300)
+  end
+
+  local reelDelay = C.firstDefined(data.reel_delay_ms, data.reel_delay)
+  if reelDelay ~= nil then
+    session.reelDelay = C.clamp(tonumber(reelDelay) or C.FISHER_DEFAULTS.reelDelay, 0, 200)
   end
 
   local postReel = C.firstDefined(data.post_reel_ms, data.post_reel)
