@@ -330,7 +330,16 @@ local function handleStopReason(reason)
   if notice then
     notify(tr(notice))
     osd(tr(notice), true)
-  elseif reason == "heartbeat" or reason == "error" then
+  elseif reason == "heartbeat" then
+    -- The helper exits when the plugin stops updating its heartbeat, which is
+    -- what happens across a suspend. That is a safety stop, not a failure.
+    if runtime.error ~= "" then
+      notifyError(tr("notification.helper_error"), runtime.error)
+      osd(tr("notification.helper_error"), true)
+    else
+      osd(tr("notification.stopped"), true)
+    end
+  elseif reason == "error" then
     local detail = runtime.error ~= "" and runtime.error or tr("notification.helper_error")
     notifyError(tr("notification.helper_error"), detail)
     osd(tr("notification.helper_error"), true)
@@ -916,6 +925,23 @@ local function readStatus(now)
 
   local status = noctalia.json.decode(raw)
   if type(status) ~= "table" then
+    return
+  end
+
+  -- After a suspend the helper can exit while the last status document still
+  -- says "ready". Treat an old document as evidence that the process is gone,
+  -- so the next start spawns a fresh helper instead of signalling a dead pid.
+  -- While running, the stale branch below reports a wedged helper instead.
+  local updated = tonumber(status.updated_at_ms) or 0
+  if runtime.phase ~= "running" and (updated <= 0 or now - updated > HELPER_STALE_MS) then
+    if helper.proc or helper.pid or runtime.helper ~= "stopped" then
+      log("helper status is stale; marking it stopped")
+      helper.proc = false
+      helper.pid = nil
+      helper.path = nil
+      runtime.helper = "stopped"
+      publish(true)
+    end
     return
   end
 

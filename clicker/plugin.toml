@@ -1,6 +1,6 @@
 id = "c010ur/clicker"
 name = "Clicker"
-version = "1.2.0"
+version = "1.2.1"
 plugin_api = 43
 author = "c010ur"
 license = "MIT"
